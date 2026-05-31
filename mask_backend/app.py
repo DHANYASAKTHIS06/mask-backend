@@ -12,7 +12,6 @@ from functools import wraps
 import certifi
 import cv2
 import numpy as np
-import pandas as pd
 import joblib
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -38,24 +37,48 @@ logger = logging.getLogger(__name__)
 
 # ─── MongoDB Connection ───────────────────────────────────────────────────────
 MONGO_URI = os.environ.get("MONGO_URI")
-if not MONGO_URI:
-    raise RuntimeError("MONGO_URI environment variable is not set. Add it in Render → Environment.")
 
-try:
-    mongo_client = MongoClient(
-    MONGO_URI,
-    tls=True,
-    tlsCAFile=certifi.where()
-)
-    mongo_client.admin.command("ping")
-    mongo_db  = mongo_client["maskguard"]
-    users_col = mongo_db["users"]
-    logs_col  = mongo_db["detection_logs"]
-    users_col.create_index("email", unique=True)
-    logger.info("MongoDB Atlas connected successfully.")
-except Exception as e:
-    logger.error(f"MongoDB connection failed: {e}")
-    raise
+mongo_client = None
+mongo_db = None
+users_col = None
+logs_col = None
+
+if not MONGO_URI:
+    logger.warning("MONGO_URI not found.")
+else:
+    try:
+        mongo_client = MongoClient(
+            MONGO_URI,
+            tls=True,
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            socketTimeoutMS=30000,
+            retryWrites=True
+        )
+
+        mongo_db = mongo_client["maskguard"]
+        users_col = mongo_db["users"]
+        logs_col = mongo_db["detection_logs"]
+
+        users_col.create_index("email", unique=True)
+
+        logger.info("MongoDB initialized successfully.")
+
+    except Exception as e:
+        logger.error(f"MongoDB connection failed: {e}")
+
+# ─── MongoDB Connection Helper ────────────────────────────────────────────────
+def check_db():
+    try:
+        if mongo_client is None:
+            return False
+
+        mongo_client.admin.command("ping")
+        return True
+
+    except Exception:
+        return False
 
 # ─── Load ML Models ───────────────────────────────────────────────────────────
 try:
@@ -225,18 +248,26 @@ def predict_mask(image_b64: str):
 
 @app.route("/api/health", methods=["GET"])
 def health():
+    db_status = "disconnected"
+
+    if check_db():
+        db_status = "connected"
+
     return jsonify({
-        "status":         "ok",
-        "model_loaded":   model is not None,
+        "status": "ok",
+        "database": db_status,
+        "model_loaded": model is not None,
         "model_accuracy": model_stats.get("accuracy", 0),
-        "database":       "MongoDB Atlas",
-        "timestamp":      datetime.utcnow().isoformat(),
+        "timestamp": datetime.utcnow().isoformat()
     })
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     data      = request.get_json() or {}
     full_name = data.get("full_name", "").strip()
     email     = data.get("email", "").strip().lower()
@@ -273,6 +304,9 @@ def register():
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     data     = request.get_json() or {}
     email    = data.get("email", "").strip().lower()
     password = data.get("password", "").strip()
@@ -289,9 +323,9 @@ def login():
         "message": "Login successful",
         "token":   token,
         "user": {
-            "id":         user["id"],
-            "full_name":  user["full_name"],
-            "email":      user["email"],
+            "id":          user["id"],
+            "full_name":   user["full_name"],
+            "email":       user["email"],
             "created_at": user["created_at"],
         },
     })
@@ -300,13 +334,16 @@ def login():
 @app.route("/api/auth/me", methods=["GET"])
 @token_required
 def me():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     user = users_col.find_one({"id": request.user["user_id"]})
     if not user:
         return jsonify({"error": "User not found"}), 404
     return jsonify({
-        "id":         user["id"],
-        "full_name":  user["full_name"],
-        "email":      user["email"],
+        "id":          user["id"],
+        "full_name":   user["full_name"],
+        "email":       user["email"],
         "created_at": user["created_at"],
     })
 
@@ -315,6 +352,9 @@ def me():
 @app.route("/api/detect", methods=["POST"])
 @token_required
 def detect():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     data  = request.get_json() or {}
     image = data.get("image")
     if not image:
@@ -354,6 +394,9 @@ def detect():
 @app.route("/api/logs", methods=["GET"])
 @token_required
 def get_logs():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     page     = max(1, int(request.args.get("page", 1)))
     per_page = min(100, int(request.args.get("per_page", 20)))
     skip     = (page - 1) * per_page
@@ -377,6 +420,9 @@ def get_logs():
 @app.route("/api/logs/export", methods=["GET"])
 @token_required
 def export_csv():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     uid  = request.user["user_id"]
     rows = list(logs_col.find({"user_id": uid}, {"_id": 0}).sort("timestamp", -1))
 
@@ -400,6 +446,9 @@ def export_csv():
 @app.route("/api/stats", methods=["GET"])
 @token_required
 def stats():
+    if not check_db():
+        return jsonify({"error": "Database unavailable"}), 503
+
     uid = request.user["user_id"]
 
     total   = logs_col.count_documents({"user_id": uid})
