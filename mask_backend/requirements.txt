@@ -6,4 +6,6 @@ scikit-learn==1.6.1
 joblib
 gunicorn
 opencv-python-headless
-pymongo[srv]
+pymongo
+dnspython
+certifi
