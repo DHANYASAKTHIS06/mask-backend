@@ -1,0 +1,7 @@
+{
+  "total": 40000,
+  "mask": 30000,
+  "no_mask": 10000,
+  "accuracy": 0.99675,
+  "n_features": 23
+}
