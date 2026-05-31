@@ -5,32 +5,31 @@ import base64
 import hashlib
 import hmac
 import time
-import ssl
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
 
+import certifi
 import cv2
 import numpy as np
 import pandas as pd
 import joblib
-from flask import Flask, request, jsonify, send_file, g
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
-from bson import ObjectId
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR  = os.path.join(BASE_DIR, "models")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
-LOGS_DIR   = os.path.join(BASE_DIR, "logs")
+LOGS_DIR    = os.path.join(BASE_DIR, "logs")
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
-os.makedirs(LOGS_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR,    exist_ok=True)
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "mask-detection-secret-key-2024")
 
@@ -43,24 +42,17 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI environment variable is not set. Add it in Render → Environment.")
 
 try:
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
     mongo_client = MongoClient(
-    MONGO_URI,
-    serverSelectionTimeoutMS=10000,
-    connectTimeoutMS=20000,
-    socketTimeoutMS=20000,
-    tls=True,
-    tlsAllowInvalidCertificates=True,
-    tlsAllowInvalidHostnames=True,
-)
+        MONGO_URI,
+        tlsCAFile=certifi.where(),
+        serverSelectionTimeoutMS=10000,
+        connectTimeoutMS=20000,
+        socketTimeoutMS=20000,
+    )
     mongo_client.admin.command("ping")
-    mongo_db    = mongo_client["maskguard"]
-    users_col   = mongo_db["users"]
-    logs_col    = mongo_db["detection_logs"]
-    # Unique index on email
+    mongo_db  = mongo_client["maskguard"]
+    users_col = mongo_db["users"]
+    logs_col  = mongo_db["detection_logs"]
     users_col.create_index("email", unique=True)
     logger.info("MongoDB Atlas connected successfully.")
 except Exception as e:
@@ -135,15 +127,6 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-def serialize(doc):
-    """Convert MongoDB document to JSON-serializable dict."""
-    if doc is None:
-        return None
-    d = dict(doc)
-    if "_id" in d:
-        d["_id"] = str(d["_id"])
-    return d
-
 # ─── ML Prediction Helpers ────────────────────────────────────────────────────
 def simulate_image_features(img_array, n_features=20):
     if img_array is None or img_array.size == 0:
@@ -196,12 +179,10 @@ def predict_mask(image_b64: str):
     except Exception as e:
         return {"error": f"Image decode failed: {e}"}
 
-    # Save screenshot
     screenshot_name = f"{uuid.uuid4().hex}.jpg"
     screenshot_path = os.path.join(UPLOADS_DIR, screenshot_name)
     cv2.imwrite(screenshot_path, img)
 
-    # Face detection
     gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
@@ -211,7 +192,8 @@ def predict_mask(image_b64: str):
     if face_detected:
         x, y, w, h = faces[0]
         margin = int(0.2 * min(w, h))
-        x1 = max(0, x - margin);  y1 = max(0, y - margin)
+        x1 = max(0, x - margin)
+        y1 = max(0, y - margin)
         x2 = min(img.shape[1], x + w + margin)
         y2 = min(img.shape[0], y + h + margin)
         face_region = img[y1:y2, x1:x2]
@@ -233,12 +215,12 @@ def predict_mask(image_b64: str):
     entry_status = "GRANTED" if result == "mask" else "DENIED"
 
     return {
-        "result":       result,
-        "confidence":   round(confidence * 100, 2),
-        "entry_status": entry_status,
+        "result":        result,
+        "confidence":    round(confidence * 100, 2),
+        "entry_status":  entry_status,
         "face_detected": face_detected,
-        "faces_count":  len(faces),
-        "image_path":   screenshot_name,
+        "faces_count":   len(faces),
+        "image_path":    screenshot_name,
     }
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -270,7 +252,7 @@ def register():
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
-    user_id = str(uuid.uuid4())
+    user_id  = str(uuid.uuid4())
     user_doc = {
         "id":         user_id,
         "full_name":  full_name,
@@ -364,8 +346,8 @@ def detect():
 
     return jsonify({
         **result,
-        "log_id":   log_id,
-        "username": username,
+        "log_id":    log_id,
+        "username":  username,
         "timestamp": now,
     })
 
@@ -426,7 +408,6 @@ def stats():
     granted = logs_col.count_documents({"user_id": uid, "entry_status": "GRANTED"})
     denied  = logs_col.count_documents({"user_id": uid, "entry_status": "DENIED"})
 
-    # Average confidence
     pipeline_avg = [
         {"$match": {"user_id": uid}},
         {"$group": {"_id": None, "avg_conf": {"$avg": "$confidence"}}}
@@ -436,12 +417,11 @@ def stats():
 
     compliance = round((granted / total * 100), 1) if total else 0
 
-    # Last 7 days trend
     seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
     pipeline_trend = [
         {"$match": {"user_id": uid, "timestamp": {"$gte": seven_days_ago}}},
         {"$group": {
-            "_id": {"$substr": ["$timestamp", 0, 10]},
+            "_id":     {"$substr": ["$timestamp", 0, 10]},
             "count":   {"$sum": 1},
             "granted": {"$sum": {"$cond": [{"$eq": ["$entry_status", "GRANTED"]}, 1, 0]}}
         }},
@@ -451,13 +431,13 @@ def stats():
     trend = list(logs_col.aggregate(pipeline_trend))
 
     return jsonify({
-        "total_detections":    total,
-        "total_granted":       granted,
-        "total_denied":        denied,
+        "total_detections":      total,
+        "total_granted":         granted,
+        "total_denied":          denied,
         "compliance_percentage": compliance,
-        "avg_confidence":      round(float(avg_conf), 2),
-        "model_accuracy":      round(model_stats.get("accuracy", 0) * 100, 2),
-        "trend":               trend,
+        "avg_confidence":        round(float(avg_conf), 2),
+        "model_accuracy":        round(model_stats.get("accuracy", 0) * 100, 2),
+        "trend":                 trend,
     })
 
 # ── Screenshots ───────────────────────────────────────────────────────────────
@@ -475,14 +455,14 @@ def get_screenshot(filename):
 @app.route("/api/model/info", methods=["GET"])
 def model_info():
     return jsonify({
-        "algorithm":       "Gradient Boosting Classifier",
-        "framework":       "scikit-learn 1.6.1",
-        "features":        "Face region pixel statistics + texture analysis",
-        "classes":         ["No Mask", "Mask"],
+        "algorithm":        "Gradient Boosting Classifier",
+        "framework":        "scikit-learn 1.6.1",
+        "features":         "Face region pixel statistics + texture analysis",
+        "classes":          ["No Mask", "Mask"],
         "training_samples": model_stats.get("total", 40000),
-        "accuracy":        round(model_stats.get("accuracy", 0) * 100, 2),
-        "face_detector":   "OpenCV Haar Cascade",
-        "dataset":         "Medical Masks Dataset (CSV Metadata)",
+        "accuracy":         round(model_stats.get("accuracy", 0) * 100, 2),
+        "face_detector":    "OpenCV Haar Cascade",
+        "dataset":          "Medical Masks Dataset (CSV Metadata)",
     })
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
