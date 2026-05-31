@@ -205,19 +205,31 @@ def predict_mask(image_b64: str):
     cv2.imwrite(screenshot_path, img)
 
     gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4, minSize=(30, 30))
 
     face_detected = len(faces) > 0
-    face_region   = img
+    h_img, w_img, _ = img.shape
 
     if face_detected:
         x, y, w, h = faces[0]
-        margin = int(0.2 * min(w, h))
-        x1 = max(0, x - margin)
-        y1 = max(0, y - margin)
-        x2 = min(img.shape[1], x + w + margin)
-        y2 = min(img.shape[0], y + h + margin)
+        # Make the crop slightly larger to catch the edges of the mask
+        margin_w = int(0.15 * w)
+        margin_h = int(0.15 * h)
+        x1 = max(0, x - margin_w)
+        y1 = max(0, y - margin_h)
+        x2 = min(w_img, x + w + margin_w)
+        y2 = min(h_img, y + h + margin_h)
         face_region = img[y1:y2, x1:x2]
+    else:
+        # FALLBACK: If mask blocks face detection, crop the central 60% of the frame
+        # assuming the user is looking directly at the camera.
+        y1, y2 = int(h_img * 0.20), int(h_img * 0.80)
+        x1, x2 = int(w_img * 0.20), int(w_img * 0.80)
+        face_region = img[y1:y2, x1:x2]
+
+    # Force the face region to be a square before passing to feature extractor
+    if face_region.size > 0:
+        face_region = cv2.resize(face_region, (128, 128))
 
     img_feats  = simulate_image_features(face_region, n_features=20)
     size_mb    = len(img_bytes) / (1024 * 1024)
@@ -243,7 +255,6 @@ def predict_mask(image_b64: str):
         "faces_count":   len(faces),
         "image_path":    screenshot_name,
     }
-
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route("/api/health", methods=["GET"])
