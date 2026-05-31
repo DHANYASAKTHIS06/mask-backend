@@ -22,7 +22,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "mask_system.db")
+DB_PATH = os.path.join(BASE_DIR, "mongodb+srv://dhanyasakthis06_db_user:sakthis123456@cluster0.aeeqyj1.mongodb.net/?appName=Cluster0")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
