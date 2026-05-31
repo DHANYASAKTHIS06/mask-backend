@@ -43,12 +43,10 @@ if not MONGO_URI:
 
 try:
     mongo_client = MongoClient(
-        MONGO_URI,
-        tlsCAFile=certifi.where(),
-        serverSelectionTimeoutMS=10000,
-        connectTimeoutMS=20000,
-        socketTimeoutMS=20000,
-    )
+    MONGO_URI,
+    tls=True,
+    tlsCAFile=certifi.where()
+)
     mongo_client.admin.command("ping")
     mongo_db  = mongo_client["maskguard"]
     users_col = mongo_db["users"]
