@@ -43,11 +43,18 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI environment variable is not set. Add it in Render → Environment.")
 
 try:
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
     mongo_client = MongoClient(
     MONGO_URI,
     serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=20000,
+    socketTimeoutMS=20000,
     tls=True,
     tlsAllowInvalidCertificates=True,
+    tlsAllowInvalidHostnames=True,
 )
     mongo_client.admin.command("ping")
     mongo_db    = mongo_client["maskguard"]
