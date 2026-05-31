@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ─── MongoDB Connection ───────────────────────────────────────────────────────
-MONGO_URI = os.environ.get("mongodb+srv://dhanyasakthis06_db_user:sakthis123456@cluster0.widczwi.mongodb.net/?appName=Cluster0")
+MONGO_URI = os.environ.get("MONGO_URI")
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI environment variable is not set. Add it in Render → Environment.")
 
