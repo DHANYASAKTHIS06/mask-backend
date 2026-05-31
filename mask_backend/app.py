@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import time
+import ssl
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
@@ -42,7 +43,12 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI environment variable is not set. Add it in Render → Environment.")
 
 try:
-    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+    mongo_client = MongoClient(
+    MONGO_URI,
+    serverSelectionTimeoutMS=10000,
+    tls=True,
+    tlsAllowInvalidCertificates=True,
+)
     mongo_client.admin.command("ping")
     mongo_db    = mongo_client["maskguard"]
     users_col   = mongo_db["users"]
